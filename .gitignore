@@ -1,0 +1,23 @@
+node_modules
+dist
+.DS_Store
+server/public
+vite.config.ts.*
+*.tar.gz
+/generated/prisma
+
+# Environment files (keep .env.example for reference)
+.env
+
+# Replit-specific
+.replit
+.cache
+.config
+.local
+.upm
+
+# User uploads (if applicable)
+uploads
+
+# Replit attached assets
+attached_assets
