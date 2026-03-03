@@ -78,6 +78,10 @@ export const CartProvider = ({ children }) => {
   const subtotal = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
 
   const addItem = useCallback(async (product, quantity = 1) => {
+    if (!product || !product.id) {
+      throw new Error('Invalid product passed to addItem');
+    }
+
     if (!isAuthenticated) {
       setError('Please login to add items to cart');
       return false;
