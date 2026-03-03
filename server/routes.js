@@ -1,5 +1,5 @@
 import { storage } from "./storage.js";
-import { insertProductSchema, insertUserSchema, insertCartItemSchema, insertOrderSchema, insertOrderItemSchema, updateProductSchema, updateOrderStatusSchema, insertAddressSchema, updateAddressSchema, insertWishlistItemSchema, updateUserProfileSchema, changePasswordSchema, updateUserRoleSchema, updateUserActiveSchema, insertOrderNoteSchema, insertContactSubmissionSchema, insertNewsletterSubscriberSchema } from "../shared/schema.js";
+import { insertProductSchema, insertUserSchema, insertCartItemSchema, insertOrderSchema, insertOrderItemSchema, updateProductSchema, updateOrderStatusSchema, insertAddressSchema, updateAddressSchema, insertWishlistItemSchema, updateUserProfileSchema, changePasswordSchema, updateUserRoleSchema, updateUserActiveSchema, insertOrderNoteSchema, insertContactSubmissionSchema, insertNewsletterSubscriberSchema, loginSchema, addToCartSchema, updateCartItemQuantitySchema, createOrderSchema, adminBulkProductsSchema, adminImportProductsSchema, adjustStockSchema, adminOrderNoteCreateSchema, adminSettingUpdateSchema, revokeSessionsSchema } from "../shared/schema.js";
 import { z } from "zod";
 import { signToken } from "./utils/jwt.js";
 import { requireAuth, requireAdmin } from "./middlewares/auth.js";
@@ -279,7 +279,7 @@ export async function registerRoutes(httpServer, app) {
   app.post("/api/cart", requireAuth, checkoutLimiter, async (req, res) => {
     try {
       const userId = req.user.id;
-      const { productId, quantity } = req.body;
+      const { productId, quantity } = addToCartSchema.parse(req.body);
 
       let cart = await storage.getCartByUserId(userId);
 
@@ -301,6 +301,9 @@ export async function registerRoutes(httpServer, app) {
       const items = await storage.getCartItems(cart.id);
       res.json({ cart, items });
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid cart payload", errors: error.errors });
+      }
       res.status(500).json({ message: "Failed to add item to cart" });
     }
   });
@@ -308,7 +311,7 @@ export async function registerRoutes(httpServer, app) {
   app.patch("/api/cart/item/:id", requireAuth, checkoutLimiter, async (req, res) => {
     try {
       const { id } = req.params;
-      const { quantity } = req.body;
+      const { quantity } = updateCartItemQuantitySchema.parse(req.body);
 
       const [itemWithCart] = await db
         .select({
@@ -336,6 +339,9 @@ export async function registerRoutes(httpServer, app) {
 
       res.json({ success: true });
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid cart payload", errors: error.errors });
+      }
       res.status(500).json({ message: "Failed to update cart item" });
     }
   });
@@ -372,11 +378,7 @@ export async function registerRoutes(httpServer, app) {
   app.post("/api/orders", requireAuth, checkoutLimiter, async (req, res) => {
     try {
       const userId = req.user.id;
-      const { shipping, deliveryMethod, paymentMethod, promoCode, deliveryCharge, discount } = req.body;
-
-      if (!shipping || !shipping.name || !shipping.phone || !shipping.address || !shipping.city || !shipping.state || !shipping.pinCode) {
-        return res.status(400).json({ error: "Shipping information is required" });
-      }
+      const { shipping, deliveryMethod, paymentMethod, promoCode, deliveryCharge, discount } = createOrderSchema.parse(req.body);
 
       const result = await db.transaction(async (tx) => {
         const [cart] = await tx.select().from(carts).where(eq(carts.userId, userId)).limit(1);
@@ -516,6 +518,10 @@ export async function registerRoutes(httpServer, app) {
       res.status(201).json(result);
     } catch (error) {
       console.error("Checkout transaction failed:", error);
+
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid order payload", errors: error.errors });
+      }
 
       if (error?.status === 400) {
         return res.status(400).json({ error: error.message });
@@ -668,7 +674,7 @@ export async function registerRoutes(httpServer, app) {
 
   app.post("/api/auth/login", authLimiter, async (req, res) => {
     try {
-      const { email, password } = req.body;
+      const { email, password } = loginSchema.parse(req.body);
 
       const user = await storage.getUserByEmail(email);
       if (!user) {
@@ -689,6 +695,9 @@ export async function registerRoutes(httpServer, app) {
       const { passwordHash, ...userWithoutPassword } = user;
       res.json({ token, user: userWithoutPassword });
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid login data", errors: error.errors });
+      }
       res.status(500).json({ error: "Something went wrong" });
     }
   });
@@ -952,10 +961,7 @@ export async function registerRoutes(httpServer, app) {
 
   app.post("/api/admin/products/bulk", async (req, res) => {
     try {
-      const { ids, action, data } = req.body;
-      if (!ids || !Array.isArray(ids) || ids.length === 0) {
-        return res.status(400).json({ message: "No products selected" });
-      }
+      const { ids, action, data } = adminBulkProductsSchema.parse(req.body);
 
       let updateData = {};
       if (action === 'activate') updateData.active = true;
@@ -978,21 +984,24 @@ export async function registerRoutes(httpServer, app) {
 
       res.status(400).json({ message: "Invalid action" });
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid bulk operation payload", errors: error.errors });
+      }
       res.status(500).json({ message: "Bulk operation failed" });
     }
   });
 
   app.post("/api/admin/products/import", async (req, res) => {
     try {
-      const { products: productsData } = req.body;
-      if (!productsData || !Array.isArray(productsData)) {
-        return res.status(400).json({ message: "Invalid products data" });
-      }
+      const { products: productsData } = adminImportProductsSchema.parse(req.body);
 
       const results = await storage.bulkImportProducts(productsData);
       await createAuditLog(storage, req, 'PRODUCTS_IMPORT', 'products', null, results);
       res.json(results);
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid products data", errors: error.errors });
+      }
       res.status(500).json({ message: "Import failed" });
     }
   });
@@ -1088,6 +1097,7 @@ export async function registerRoutes(httpServer, app) {
 
   app.post("/api/admin/users/:id/revoke-sessions", async (req, res) => {
     try {
+      revokeSessionsSchema.parse(req.body || {});
       const { id } = req.params;
       const user = await storage.revokeUserSessions(id);
       if (!user) {
@@ -1096,6 +1106,9 @@ export async function registerRoutes(httpServer, app) {
       await createAuditLog(storage, req, 'USER_SESSIONS_REVOKED', 'user', id, { tokenVersion: user.tokenVersion });
       res.json({ success: true, message: "Sessions revoked" });
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid payload", errors: error.errors });
+      }
       res.status(500).json({ message: "Failed to revoke sessions" });
     }
   });
@@ -1113,11 +1126,7 @@ export async function registerRoutes(httpServer, app) {
   app.post("/api/admin/products/:id/adjust-stock", async (req, res) => {
     try {
       const { id } = req.params;
-      const { adjustment } = req.body;
-      
-      if (typeof adjustment !== 'number') {
-        return res.status(400).json({ message: "Invalid adjustment value" });
-      }
+      const { adjustment } = adjustStockSchema.parse(req.body);
 
       const product = await storage.adjustProductStock(id, adjustment);
       if (!product) {
@@ -1127,6 +1136,9 @@ export async function registerRoutes(httpServer, app) {
       await createAuditLog(storage, req, 'STOCK_ADJUSTED', 'product', id, { adjustment, newStock: product.stock });
       res.json(product);
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid adjustment value", errors: error.errors });
+      }
       res.status(500).json({ message: "Failed to adjust stock" });
     }
   });
@@ -1134,11 +1146,7 @@ export async function registerRoutes(httpServer, app) {
   app.post("/api/admin/orders/:id/notes", async (req, res) => {
     try {
       const { id } = req.params;
-      const { note } = req.body;
-      
-      if (!note || typeof note !== 'string') {
-        return res.status(400).json({ message: "Note is required" });
-      }
+      const { note } = adminOrderNoteCreateSchema.parse(req.body);
 
       const existingOrder = await storage.getOrder(id);
       if (!existingOrder) {
@@ -1149,6 +1157,9 @@ export async function registerRoutes(httpServer, app) {
       await createAuditLog(storage, req, 'ORDER_NOTE_ADDED', 'order', id, { note });
       res.status(201).json(orderNote);
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid note payload", errors: error.errors });
+      }
       res.status(500).json({ message: "Failed to add note" });
     }
   });
@@ -1217,24 +1228,15 @@ export async function registerRoutes(httpServer, app) {
 
   app.patch("/api/admin/settings", async (req, res) => {
     try {
-      const { key, value } = req.body;
-      if (!key || value === undefined) {
-        return res.status(400).json({ message: "Key and value required" });
-      }
-
-      const allowedKeys = ['freeShippingThreshold', 'lowStockThreshold', 'maintenanceMode', 'currency'];
-      if (!allowedKeys.includes(key)) {
-        return res.status(400).json({ message: "Invalid setting key" });
-      }
-
-      if (key === 'currency' && !['INR', 'USD', 'AED'].includes(value)) {
-        return res.status(400).json({ message: "Invalid currency. Allowed: INR, USD, AED" });
-      }
+      const { key, value } = adminSettingUpdateSchema.parse(req.body);
 
       await storage.setAdminSetting(key, String(value));
       await createAuditLog(storage, req, 'SETTING_CHANGED', 'settings', key, { value });
       res.json({ success: true, key, value });
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid setting payload", errors: error.errors });
+      }
       res.status(500).json({ message: "Failed to update setting" });
     }
   });
