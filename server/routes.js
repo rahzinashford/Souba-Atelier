@@ -120,11 +120,15 @@ export async function registerRoutes(httpServer, app) {
       for (const file of req.files) {
         const extension = path.extname(file.originalname || "").toLowerCase();
         const expectedMime = allowedImageMimes[extension];
-        const fileBuffer = fs.readFileSync(file.path);
+        const fileBuffer = await fs.promises.readFile(file.path);
         const detectedMime = detectImageSignature(fileBuffer);
 
         if (!expectedMime || !detectedMime || detectedMime !== expectedMime) {
-          fs.unlinkSync(file.path);
+          await Promise.allSettled(
+            req.files
+              .filter((uploadedFile) => isUploadPathSafe(uploadedFile.path))
+              .map((uploadedFile) => fs.promises.unlink(uploadedFile.path))
+          );
           return res.status(400).json({ error: "Invalid image file content" });
         }
       }
@@ -132,6 +136,11 @@ export async function registerRoutes(httpServer, app) {
       const urls = req.files.map(file => `/uploads/products/${file.filename}`);
       res.json(urls);
     } catch (_error) {
+      await Promise.allSettled(
+        (req.files || [])
+          .filter((file) => isUploadPathSafe(file.path))
+          .map((file) => fs.promises.unlink(file.path))
+      );
       res.status(500).json({ error: "Upload failed" });
     }
   });
