@@ -48,7 +48,7 @@ ADMIN_PASSWORD=replace_with_a_strong_password
 1. Clone the repository.
 2. Move into the project directory:
    ```bash
-   cd SoubaAtelier-1
+   cd Souba-Atelier
    ```
 3. Install dependencies:
    ```bash
