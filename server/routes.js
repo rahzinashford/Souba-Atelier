@@ -109,9 +109,9 @@ function createAuditLog(storage, req, eventType, targetType, targetId, details) 
 
 export async function registerRoutes(httpServer, app) {
   
-  app.use("/api/admin", requireAuth, requireAdmin);
+  app.use("/api/admin", adminLimiter, requireAuth, requireAdmin);
 
-  app.post("/api/admin/uploads/images", requireAuth, requireAdmin, upload.array("images", 8), async (req, res) => {
+  app.post("/api/admin/uploads/images", upload.array("images", 8), async (req, res) => {
     try {
       if (!req.files || req.files.length === 0) {
         return res.status(400).json({ error: "No files uploaded" });
@@ -120,11 +120,15 @@ export async function registerRoutes(httpServer, app) {
       for (const file of req.files) {
         const extension = path.extname(file.originalname || "").toLowerCase();
         const expectedMime = allowedImageMimes[extension];
-        const fileBuffer = fs.readFileSync(file.path);
+        const fileBuffer = await fs.promises.readFile(file.path);
         const detectedMime = detectImageSignature(fileBuffer);
 
         if (!expectedMime || !detectedMime || detectedMime !== expectedMime) {
-          fs.unlinkSync(file.path);
+          await Promise.allSettled(
+            req.files
+              .filter((uploadedFile) => isUploadPathSafe(uploadedFile.path))
+              .map((uploadedFile) => fs.promises.unlink(uploadedFile.path))
+          );
           return res.status(400).json({ error: "Invalid image file content" });
         }
       }
@@ -132,6 +136,11 @@ export async function registerRoutes(httpServer, app) {
       const urls = req.files.map(file => `/uploads/products/${file.filename}`);
       res.json(urls);
     } catch (_error) {
+      await Promise.allSettled(
+        (req.files || [])
+          .filter((file) => isUploadPathSafe(file.path))
+          .map((file) => fs.promises.unlink(file.path))
+      );
       res.status(500).json({ error: "Upload failed" });
     }
   });
@@ -545,7 +554,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.get("/api/admin/orders", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/admin/orders", async (req, res) => {
     try {
       const ordersWithUsers = await storage.getAllOrders();
 
@@ -566,7 +575,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.get("/api/admin/orders/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/admin/orders/:id", async (req, res) => {
     try {
       const { id } = req.params;
       const order = await storage.getOrder(id);
@@ -607,7 +616,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.patch("/api/admin/orders/:id/status", requireAuth, requireAdmin, async (req, res) => {
+  app.patch("/api/admin/orders/:id/status", async (req, res) => {
     try {
       const { id } = req.params;
       const validatedData = updateOrderStatusSchema.parse(req.body);
@@ -877,7 +886,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.get("/api/admin/overview", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/admin/overview", async (req, res) => {
     try {
       const stats = await storage.getAdminOverviewStats();
       const salesTimeseries = await storage.getSalesTimeseries(30);
@@ -898,7 +907,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.get("/api/admin/top-products", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/admin/top-products", async (req, res) => {
     try {
       const limit = parseInt(req.query.limit) || 10;
       const topProducts = await storage.getTopProducts(limit);
@@ -908,7 +917,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.get("/api/admin/recent-activity", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/admin/recent-activity", async (req, res) => {
     try {
       const limit = parseInt(req.query.limit) || 20;
       const activity = await storage.getRecentAuditLogs(limit);
@@ -918,7 +927,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.get("/api/admin/products", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/admin/products", async (req, res) => {
     try {
       const result = await storage.getAdminProductsPaginated(req.query);
       res.json(result);
@@ -928,7 +937,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.get("/api/admin/products/categories", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/admin/products/categories", async (req, res) => {
     try {
       const categories = await storage.getProductCategories();
       res.json(categories);
@@ -937,7 +946,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.post("/api/admin/products/bulk", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/admin/products/bulk", async (req, res) => {
     try {
       const { ids, action, data } = req.body;
       if (!ids || !Array.isArray(ids) || ids.length === 0) {
@@ -969,7 +978,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.post("/api/admin/products/import", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/admin/products/import", async (req, res) => {
     try {
       const { products: productsData } = req.body;
       if (!productsData || !Array.isArray(productsData)) {
@@ -984,7 +993,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.get("/api/admin/products/export", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/admin/products/export", async (req, res) => {
     try {
       const result = await storage.getAdminProductsPaginated({ ...req.query, pageSize: 10000 });
       const csv = [
@@ -1002,7 +1011,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.get("/api/admin/users", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/admin/users", async (req, res) => {
     try {
       const result = await storage.getUsersWithPagination(req.query);
       res.json(result);
@@ -1012,7 +1021,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.get("/api/admin/users/:id", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/admin/users/:id", async (req, res) => {
     try {
       const { id } = req.params;
       const user = await storage.getUser(id);
@@ -1027,7 +1036,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.patch("/api/admin/users/:id/role", requireAuth, requireAdmin, async (req, res) => {
+  app.patch("/api/admin/users/:id/role", async (req, res) => {
     try {
       const { id } = req.params;
       const validatedData = updateUserRoleSchema.parse(req.body);
@@ -1050,7 +1059,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.patch("/api/admin/users/:id/active", requireAuth, requireAdmin, async (req, res) => {
+  app.patch("/api/admin/users/:id/active", async (req, res) => {
     try {
       const { id } = req.params;
       const validatedData = updateUserActiveSchema.parse(req.body);
@@ -1073,7 +1082,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.post("/api/admin/users/:id/revoke-sessions", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/admin/users/:id/revoke-sessions", async (req, res) => {
     try {
       const { id } = req.params;
       const user = await storage.revokeUserSessions(id);
@@ -1087,7 +1096,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.get("/api/admin/inventory/low-stock", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/admin/inventory/low-stock", async (req, res) => {
     try {
       const threshold = parseInt(req.query.threshold) || 10;
       const products = await storage.getLowStockProducts(threshold);
@@ -1097,7 +1106,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.post("/api/admin/products/:id/adjust-stock", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/admin/products/:id/adjust-stock", async (req, res) => {
     try {
       const { id } = req.params;
       const { adjustment } = req.body;
@@ -1118,7 +1127,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.post("/api/admin/orders/:id/notes", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/admin/orders/:id/notes", async (req, res) => {
     try {
       const { id } = req.params;
       const { note } = req.body;
@@ -1140,7 +1149,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.get("/api/admin/orders/:id/notes", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/admin/orders/:id/notes", async (req, res) => {
     try {
       const { id } = req.params;
       const notes = await storage.getOrderNotes(id);
@@ -1150,7 +1159,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.get("/api/admin/orders/export", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/admin/orders/export", async (req, res) => {
     try {
       const result = await storage.getAdminOrdersPaginated({ ...req.query, pageSize: 10000 });
       const csv = [
@@ -1168,7 +1177,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.get("/api/admin/audit-logs", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/admin/audit-logs", async (req, res) => {
     try {
       const result = await storage.getAuditLogs(req.query);
       res.json(result);
@@ -1177,7 +1186,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.get("/api/admin/settings", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/admin/settings", async (req, res) => {
     try {
       const settings = await storage.getAllAdminSettings();
       res.json({
@@ -1202,7 +1211,7 @@ export async function registerRoutes(httpServer, app) {
     }
   });
 
-  app.patch("/api/admin/settings", requireAuth, requireAdmin, async (req, res) => {
+  app.patch("/api/admin/settings", async (req, res) => {
     try {
       const { key, value } = req.body;
       if (!key || value === undefined) {
