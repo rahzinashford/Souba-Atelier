@@ -10,6 +10,7 @@ import path from "path";
 import fs from "fs";
 import { randomUUID } from "crypto";
 import { db } from "./db.js";
+import { logError } from "./utils/logger.js";
 import { cartItems, carts, orderItems, orders, products } from "../shared/schema.js";
 import { and, eq, inArray, sql } from "drizzle-orm";
 
@@ -24,7 +25,7 @@ try {
   fs.chmodSync(uploadRootDir, 0o750);
   fs.chmodSync(uploadDir, 0o750);
 } catch (error) {
-  console.error("Failed to harden upload directory permissions", error);
+  logError("Failed to harden upload directory permissions", error);
 }
 
 const allowedImageMimes = {
@@ -248,7 +249,7 @@ export async function registerRoutes(httpServer, app) {
           await fs.promises.unlink(imagePath);
         } catch (error) {
           if (error?.code !== "ENOENT") {
-            console.error("Failed to clean up product image", { imagePath, error });
+            logError("Failed to clean up product image", error, { imagePath });
           }
         }
       }
@@ -517,7 +518,11 @@ export async function registerRoutes(httpServer, app) {
 
       res.status(201).json(result);
     } catch (error) {
-      console.error("Checkout transaction failed:", error);
+      logError("Checkout transaction failed", error);
+
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid order payload", errors: error.errors });
+      }
 
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid order payload", errors: error.errors });
@@ -915,7 +920,7 @@ export async function registerRoutes(httpServer, app) {
         recentActivity,
       });
     } catch (error) {
-      console.error("Admin overview error:", error);
+      logError("Admin overview error", error);
       res.status(500).json({ message: "Failed to fetch overview data" });
     }
   });
@@ -945,7 +950,7 @@ export async function registerRoutes(httpServer, app) {
       const result = await storage.getAdminProductsPaginated(req.query);
       res.json(result);
     } catch (error) {
-      console.error("Admin products error:", error);
+      logError("Admin products error", error);
       res.status(500).json({ message: "Failed to fetch products" });
     }
   });
@@ -1029,7 +1034,7 @@ export async function registerRoutes(httpServer, app) {
       const result = await storage.getUsersWithPagination(req.query);
       res.json(result);
     } catch (error) {
-      console.error("Admin users error:", error);
+      logError("Admin users error", error);
       res.status(500).json({ message: "Failed to fetch users" });
     }
   });
@@ -1259,7 +1264,7 @@ export async function registerRoutes(httpServer, app) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid data", errors: error.errors });
       }
-      console.error("Contact submission error:", error);
+      logError("Contact submission error", error);
       res.status(500).json({ message: "Failed to submit contact form" });
     }
   });
@@ -1278,7 +1283,7 @@ export async function registerRoutes(httpServer, app) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Invalid email", errors: error.errors });
       }
-      console.error("Newsletter subscription error:", error);
+      logError("Newsletter subscription error", error);
       res.status(500).json({ message: "Failed to subscribe" });
     }
   });
